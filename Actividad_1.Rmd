@@ -1,0 +1,1055 @@
+---
+title: "**Actividad 1**"
+author: "Karoline Del Rio"
+output: html_document
+encoding: UTF-8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(comment = "", message = FALSE, warning = FALSE, echo = TRUE)
+
+library(readxl)
+library(dplyr)
+library(knitr)
+library(writexl)
+library(purrr)
+library(tibble)
+library(stringr)
+library(summarytools)
+library(ggplot2)
+library(naniar)
+library(VIM)
+library(MissMech)
+library(tidyr)
+
+data <- read_excel("data/data_actividad1.xlsx")
+
+```
+
+# Descripción
+
+En este trabajo se presenta un análisis exploratorio de la base de datos de clientes de una campaña piloto de marketing directo. El proceso incluye la depuración de la información para garantizar su calidad, la identificación de valores atípicos y el análisis de datos faltantes, complementado con el uso de tablas y gráficos descriptivos. Además, se examina la efectividad de las campañas previas con el fin de reconocer patrones de comportamiento entre los clientes que aceptaron las ofertas y aquellos que no lo hicieron. Todo ello permite contar con una visión más clara y estructurada de la información, que servirá como base para futuros análisis y procesos de segmentación.
+
+# Objetivos
+
+## Objetivo general
+
+Explorar y describir la información de la base de datos de clientes de la campaña piloto, con el fin de limpiar y organizar los datos, detectar posibles errores o inconsistencias y conocer mejor las características de los clientes. Esto permitirá tener una visión clara y confiable de la información y servirá como punto de partida para futuros análisis y procesos de segmentación.
+
+## Objetivo específicos
+
+1. Revisar y depurar la base de datos, eliminando registros duplicados, tratando los datos faltantes y corrigiendo posibles inconsistencias, dejando un conjunto de información limpio y ordenado.
+
+2. Identificar y analizar valores atípicos en las diferentes variables, evaluando cómo influyen en la interpretación de los resultados y tomando decisiones sobre su manejo, apoyados en tablas y gráficos.
+
+3. Analizar la efectividad de las campañas de marketing previas, describiendo las diferencias entre los clientes que aceptaron las ofertas y aquellos que no lo hicieron, para comprender mejor sus perfiles y comportamientos.
+
+# Datos
+
+La base de datos utilizada contiene la información de 2.220 clientes e incluye 37 variables que abarcan aspectos demográficos, socioeconómicos, de comportamiento de compra y de respuesta a campañas de marketing. Entre ellas se encuentran indicadores de ingresos, gasto en diferentes categorías de productos, número de compras realizadas en distintos canales y variables binarias que registran la aceptación de campañas previas y de la más reciente. La descripción completa de cada variable, junto con su clasificación, se presenta en la Tabla 5 de los Anexos.
+
+# Procesamiento
+
+## Errores e inconsistencias
+
+Se realizó la identificación de registros duplicados considerando todas las variables de la base de datos. Se detectaron 179 registros duplicados de un total de 2220 registros iniciales. Estos duplicados fueron eliminados, quedando 2041 registros únicos en la base depurada. Este proceso asegura que cada fila de la base de datos represente un registro único, evitando redundancia en el análisis.
+
+```{r duplicados, echo=FALSE, message=FALSE, warning=FALSE}
+
+n_inicial <- nrow(data)
+
+duplicados <- duplicated(data)
+n_duplicados <- sum(duplicados)
+
+data_dep <- distinct(data)
+n_final <- nrow(data_dep)
+
+cat("Registros iniciales:", n_inicial, "\n")
+cat("Cantidad de duplicados encontrados:", n_duplicados, "\n")
+cat("Registros depurados:", n_final, "\n")
+
+#guardar nueva base de datos depurada como excel
+write_xlsx(data_dep, "data/data_actividad1_depurada.xlsx")
+
+```
+
+## Análisis de datos atípicos
+
+```{r chequeo_binarias, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+#Chequeo de variables binarias
+
+vars_binarias <- c(
+  "AcceptedCmp1","AcceptedCmp2","AcceptedCmp3","AcceptedCmp4","AcceptedCmp5",
+  "Response","Complain","marital_Divorced","marital_Married","marital_Single","marital_Together","marital_Widow","education_2nCycle","education_Basic","education_Graduation","education_Master","education_PhD")
+
+# filas con valores distintos de 0/1
+detalle_binarias <- data.frame(fila = integer(0), variable = character(0), valor = character(0), stringsAsFactors = FALSE)
+
+for (v in vars_binarias) {
+  x <- data_dep[[v]]
+  inval <- !(x %in% c(0, 1, "0", "1"))
+  if (any(inval)) {
+    df_v <- data.frame(
+      fila = which(inval),
+      variable = v,
+      valor = as.character(x[inval]),
+      stringsAsFactors = FALSE
+    )
+    detalle_binarias <- rbind(detalle_binarias, df_v)
+  }
+}
+
+# Resumen por variable 
+if (nrow(detalle_binarias) > 0) {
+  n_incons <- as.data.frame(table(detalle_binarias$variable), stringsAsFactors = FALSE)
+  names(n_incons) <- c("variable", "n_inconsistencias")
+  valores <- tapply(detalle_binarias$valor, detalle_binarias$variable, function(z) paste(sort(unique(z)), collapse = ", "))
+  resumen_binarias <- merge(n_incons, data.frame(variable = names(valores),
+                                        valores_detectados = as.vector(valores),
+                                        stringsAsFactors = FALSE),
+                   by = "variable", all.x = TRUE)
+  resumen_binarias <- resumen_binarias[order(-resumen_binarias$n_inconsistencias, resumen_binarias$variable), ]
+} else {
+  resumen_binarias <- data.frame(
+    variable = vars_binarias,
+    n_inconsistencias = 0L,
+    valores_detectados = "—",
+    stringsAsFactors = FALSE
+  )
+}
+
+if (nrow(detalle_binarias) > 0) {
+  cat("\nResumen de inconsistencias (binarias):\n")
+  print(resumen_binarias)
+  cat("\nDetalle:\n")
+  print(head(detalle_binarias))
+} else {
+  cat("\nNo se encontraron inconsistencias en las variables binarias evaluadas.\n")
+}
+
+```
+
+```{r chequeo_categoricas, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+#Chequeo de variables categoricas
+
+vars_cat <- c("AcceptedCmpOverall","Kidhome","Teenhome")
+
+detalle_cat <- data.frame(fila = integer(0), variable = character(0), valor = character(0),
+                      stringsAsFactors = FALSE)
+
+for (v in vars_cat) {
+  x <- data_dep[[v]]
+  inval <- is.na(x) | !(x %in% 0:5)   # permitido solo de 0 a 5
+  if (any(inval)) {
+    df_v <- data.frame(
+      fila = which(inval),
+      variable = v,
+      valor = as.character(x[inval]),
+      stringsAsFactors = FALSE
+    )
+    detalle_cat <- rbind(detalle_cat, df_v)
+  }
+}
+
+if (nrow(detalle_cat) > 0) {
+  n_incons <- as.data.frame(table(detalle_cat$variable), stringsAsFactors = FALSE)
+  names(n_incons) <- c("variable","n_inconsistencias")
+  valores <- tapply(detalle_cat$valor, detalle_cat$variable, 
+                    function(z) paste(sort(unique(z)), collapse = ", "))
+  resumen_cat <- merge(n_incons,
+                   data.frame(variable = names(valores),
+                              valores_detectados = as.vector(valores),
+                              stringsAsFactors = FALSE),
+                   by = "variable", all.x = TRUE)
+  resumen_cat <- resumen_cat[order(-resumen_cat$n_inconsistencias, resumen_cat$variable), ]
+} else {
+  resumen_cat <- data.frame(
+    variable = vars_cat,
+    n_inconsistencias = 0L,
+    valores_detectados = "—",
+    stringsAsFactors = FALSE
+  )
+}
+
+if (nrow(detalle_cat) > 0) {
+  cat("\nResumen de inconsistencias (0 a 5):\n")
+  print(resumen_cat)
+  cat("\nDetalle:\n")
+  print(utils::head(detalle_cat))
+} else {
+  cat("\nNo se encontraron inconsistencias en las variables 0–5 evaluadas.\n")
+}
+
+```
+
+```{r chequeo_cuant, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+#Chequeo de variables cuantitativas
+
+vars_cuant <- c(
+  "Age","NumDealsPurchases","NumCatalogPurchases","NumStorePurchases",
+  "NumWebPurchases","NumWebVisitsMonth","Income","MntFishProducts",
+  "MntMeatProducts","MntFruits","MntSweetProducts","MntWines",
+  "MntGoldProds","MntTotal","MntRegularProds","Customer_Days","Recency")
+
+df_num <- as.data.frame(lapply(data_dep[ , vars_cuant, drop = FALSE],
+                               function(x) suppressWarnings(as.numeric(x))))
+names(df_num) <- vars_cuant
+
+# outliers por IQR
+detalle_cuant <- data.frame(fila=integer(0), variable=character(0),
+                      valor=numeric(0), motivo=character(0))
+
+for (v in vars_cuant) {
+  x <- df_num[[v]]
+  q <- quantile(x, probs=c(.25,.75), na.rm=TRUE)
+  iqr <- q[2] - q[1]
+  li <- q[1] - 1.5*iqr
+  ls <- q[2] + 1.5*iqr
+
+  # Outliers (NA ignorados)
+  f_out <- !is.na(x) & (x < li | x > ls)
+
+  if (any(f_out)) {
+    idx <- which(f_out)
+    df_v <- data.frame(
+      fila = idx,
+      variable = v,
+      valor = x[idx],
+      motivo = "outlier IQR",
+      stringsAsFactors = FALSE
+    )
+    detalle_cuant <- rbind(detalle_cuant, df_v)
+  }
+}
+
+# Resumen por variable + % de outliers 
+n_total <- nrow(df_num)  
+
+if (nrow(detalle_cuant) > 0) {
+  resumen_cuant <- as.data.frame(table(detalle_cuant$variable), stringsAsFactors = FALSE)
+  names(resumen_cuant) <- c("variable","n_outliers")
+} else {
+  resumen_cuant <- data.frame(variable = vars_cuant, n_outliers = 0, stringsAsFactors = FALSE)
+}
+
+# Calcular % de outliers con respecto al total de registros
+resumen_cuant$pct_outliers <- round(100 * resumen_cuant$n_outliers / n_total, 2)
+
+# Ordenar por mayor % de outliers (opcional)
+resumen_cuant <- resumen_cuant[order(-resumen_cuant$pct_outliers, resumen_cuant$variable), ]
+
+# Mostrar descriptivos y resumen
+print(descr(df_num))
+print(resumen_cuant)
+
+```
+
+Para la detección de valores atípicos, las variables se clasificaron en tres grupos según su naturaleza: binarias, categóricas y cuantitativas. Esta separación permitió un análisis más preciso de las posibles inconsistencias, cuyos resultados se presentan en las Tablas 6, 7, 8 y 9.
+
+En las variables binarias, se identificaron inconsistencias únicamente en marital_Divorced, con 6 observaciones registradas como 100 cuando los valores válidos son 0/1. Estas observaciones se corrigieron a 0 por tratarse de un error de codificación.
+
+En las cuantitativas, se detectaron valores atípicos en 14 variables. Destaca Age, con 2 registros de 240 años, claramente fuera de rango. Estos casos se reemplazaron por la mediana de la variable, por ser una medida robusta y representativa ante presencia de extremos.
+
+El resto de valores atípicos aparecieron en variables de ingresos, número de compras y montos de gasto. Al revisar estos casos y teniendo en cuenta el contexto del negocio, se concluyó que, aunque son valores altos, pueden ser reales (clientes con mayores ingresos o con un nivel de compras muy activo). Además, representan menos del 11% de los datos, por lo que se decidió dejarlos tal como están para no perder información importante de estos clientes.
+
+En resumen, solo se corrigieron los errores claros (edades imposibles y registros mal codificados en estado civil) y se conservaron los demás valores atípicos que son posibles. De esta forma, la base mantiene su representatividad y se evita modificar información válida.
+
+```{r outliers, echo=FALSE, message=FALSE, warning=FALSE}
+
+data_SAT <- data_dep
+
+data_SAT <- data_SAT %>%
+  mutate(
+    marital_Divorced = suppressWarnings(as.numeric(marital_Divorced)),
+    marital_Divorced = ifelse(marital_Divorced == 100, 0, marital_Divorced)
+  )
+
+med_age <- median(data_SAT$Age[data_SAT$Age <= 100], na.rm = TRUE)
+
+data_SAT <- data_SAT %>%
+  mutate(
+    Age = ifelse(!is.na(Age) & Age > 100, med_age, Age)
+  )
+
+write_xlsx(data_SAT, "data/data_actividad1_SAT.xlsx")
+
+```
+
+**Grafico 1. Comparativo variable Age**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow = c(1,2))  # 1 fila, 2 columnas
+
+boxplot(data_dep$Age,
+        main = "Boxplot Age Antes",
+        col = "pink")
+
+boxplot(data_SAT$Age,
+        main = "Boxplot Age Despues",
+        col = "skyblue")
+```
+
+**Tabla 1. Indicadores descriptivos variable Age Antes y Después**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+summary(data_dep$Age)
+summary(data_SAT$Age)
+
+```
+
+**Grafico 2. Comparativo variable marital_Divorced**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+df_comp <- data.frame(
+  Estado = c(data_dep$marital_Divorced, data_SAT$marital_Divorced),
+  Version = c(rep("Antes", nrow(data_dep)), rep("Después", nrow(data_SAT)))
+)
+
+ggplot(df_comp, aes(x = factor(Estado), fill = Version)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Distribución de marital_Divorced Antes y Después",
+       x = "Valor",
+       y = "Frecuencia") +
+  scale_fill_manual(values = c("Antes" = "pink", "Después" = "skyblue"))
+  theme_classic()  
+
+```
+
+**Tabla 2. Indicadores descriptivos variable marital_Divorced Antes y Después**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+summary(data_dep$marital_Divorced)
+summary(data_SAT$marital_Divorced)
+
+```
+
+## Identificación de datos faltantes
+
+```{r faltantes, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+faltantes <- colSums(is.na(data_SAT)) %>%
+            as.data.frame()
+
+colnames(faltantes) ="Faltantes"
+
+plot1 =naniar::gg_miss_var(data_SAT)
+
+plot2 =aggr(data_SAT)
+
+```
+
+Para evaluar el mecanismo de generación de los datos faltantes se aplicó la prueba de Little (MCAR test). Para el análisis se consideraron las variables Income y MntWines, que son las únicas con datos faltantes en la base, junto con un conjunto reducido de variables que nos aportan contexto (Age, Kidhome, Teenhome, NumWebPurchases y NumWebVisitsMonth). Estas últimas se incluyeron con el fin de verificar si la ausencia de información en Income y MntWines podía estar asociada con características demográficas o de comportamiento de los clientes.
+
+El resultado del test paramétrico (Hawkins) arrojó un p-valor extremadamente bajo, lo cual refleja que los datos no cumplen con el supuesto de normalidad multivariante y, por lo tanto, este resultado no es concluyente. Sin embargo, el test no paramétrico de homocedasticidad entregó un p-valor de 0.227 (>0.05), por lo que no se rechaza la hipótesis nula de MCAR.
+
+Esto significa que no se encontró evidencia de un patrón sistemático en los datos faltantes. En consecuencia, los NA presentes en Income y MntWines pueden considerarse compatibles con un mecanismo MCAR, lo cual respalda el uso de métodos de imputación simples (como la imputación por la mediana) sin riesgo significativo de introducir sesgos en el análisis posterior.
+
+```{r test, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+X <- data_SAT %>%
+  select(Income, MntWines, Age, Kidhome, Teenhome, NumWebPurchases, NumWebVisitsMonth)
+
+mcar <- TestMCARNormality(X)
+mcar$p.value
+mcar
+
+```
+
+**Grafico 3. Datos faltantes iniciales**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+plot1
+plot2
+```
+
+## Imputación de datos faltantes
+
+```{r imputacion, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+data_SNA <- data_SAT
+
+data_SNA$Income[is.na(data_SNA$Income)]   <- median(data_SNA$Income, na.rm = TRUE)
+data_SNA$MntWines[is.na(data_SNA$MntWines)] <- median(data_SNA$MntWines, na.rm = TRUE)
+
+write_xlsx(data_SNA, "data/data_actividad1_sinNA.xlsx")
+
+```
+
+En el análisis de los datos faltantes se encontró que solo Income y MntWines presentaban valores ausentes, representando menos del 5% de la base. Dado que ambas variables son numéricas y tienen distribuciones asimétricas con valores extremos, se imputaron los NA usando la mediana, al ser una medida más robusta que la media. Con esto se obtuvo la base data_SNA, ya sin valores faltantes y lista para el análisis descriptivo.
+
+**Grafico 4. Comparativo variable Income**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow = c(1,2))  # 1 fila, 2 columnas
+
+# Histograma Income antes de imputar
+hist(data_SAT$Income,
+     main = "Histograma Income Antes",
+     xlab = "Income",
+     col = "pink",
+     las = 1) 
+
+# Histograma Income después de imputar
+hist(data_SNA$Income,
+     main = "Histograma Income (sin NA)",
+     xlab = "Income",
+     col = "skyblue",
+     las = 1)
+
+```
+
+**Tabla 3. Indicadores descriptivos variable Income Antes y Despues**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+summary(data_SAT$Income)
+summary(data_SNA$Income)
+
+```
+
+**Grafico 5. Comparativo variable MntWines**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow = c(1,2))  # 1 fila, 2 columnas
+
+# Histograma MntWines antes de imputar
+hist(data_SAT$MntWines,
+     main = "Histograma MntWines Antes",
+     xlab = "Income",
+     col = "pink",
+     las = 1) 
+
+# Histograma MntWines después de imputar
+hist(data_SNA$MntWines,
+     main = "Histograma MntWines (sin NA)",
+     xlab = "Income",
+     col = "skyblue",
+     las = 1)
+
+```
+
+**Tabla 4. Indicadores descriptivos variable MntWines Antes y Despues**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+summary(data_SAT$MntWines)
+summary(data_SNA$MntWines)
+
+```
+
+# Resultados y discusión
+
+### Income Vs MntTotal
+
+Al analizar la relación entre Income y MntTotal mediante un diagrama de dispersión y el cálculo de coeficientes de correlación, se encontró una correlación positiva fuerte. El coeficiente de Pearson fue de 0.809, lo que indica una relación lineal considerable, mientras que el coeficiente de Spearman fue de 0.858, confirmando que la asociación se mantiene incluso frente a valores extremos. Estos resultados sugieren que los clientes con mayores ingresos tienden a realizar un mayor gasto total en productos.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Scatter con línea de tendencia
+plot(data_SNA$Income, data_SNA$MntTotal,
+     main = "Income vs MntTotal",
+     xlab = "Income",
+     ylab = "MntTotal",
+     pch = 16, col = "skyblue")
+
+abline(lm(MntTotal ~ Income, data = data_SNA), col = "pink", lwd = 2)
+
+# Correlación de Pearson (lineal)
+cor(data_SNA$Income, data_SNA$MntTotal, method = "pearson", use = "complete.obs")
+
+# Correlación de Spearman (menos sensible a outliers)
+cor(data_SNA$Income, data_SNA$MntTotal, method = "spearman", use = "complete.obs")
+
+```
+
+### Income Vs MntWines
+
+En el análisis bivariado entre Income y MntWines se encontró una relación positiva. El coeficiente de correlación de Pearson fue de 0.698, lo que indica una asociación lineal moderada-alta, mientras que el coeficiente de Spearman alcanzó 0.822, reflejando una correlación fuerte al considerar el orden de los datos. Esto sugiere que, aunque existe dispersión en los valores de gasto, los clientes con mayores ingresos tienden de manera consistente a destinar más dinero a la compra de vinos.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Scatterplot simple
+plot(data_SNA$Income, data_SNA$MntWines,
+     main = "Income vs MntWines",
+     xlab = "Income",
+     ylab = "MntWines",
+     pch = 16, col = "skyblue")
+
+# Línea de tendencia lineal
+abline(lm(MntWines ~ Income, data = data_SNA), col = "pink", lwd = 2)
+
+# Calcular correlaciones
+cor_pearson  <- cor(data_SNA$Income, data_SNA$MntWines, method = "pearson", use = "complete.obs")
+cor_spearman <- cor(data_SNA$Income, data_SNA$MntWines, method = "spearman", use = "complete.obs")
+
+cor_pearson
+cor_spearman
+
+```
+
+### Estado Civil vs Aceptación de campaña
+
+Al analizar la aceptación de campañas según el estado civil, se observa que en todos los grupos predomina la no aceptación (entre un 75% y 80%). La proporción de clientes que aceptaron al menos una campaña se mantiene relativamente constante en los diferentes estados civiles, sin diferencias marcadas entre casados, solteros, divorciados, viudos o en unión. Esto sugiere que el estado civil no es un factor determinante en la respuesta a las campañas de marketing.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data_SNA$Marital <- NA
+data_SNA$Marital[data_SNA$marital_Divorced == 1] <- "Divorced"
+data_SNA$Marital[data_SNA$marital_Married == 1]  <- "Married"
+data_SNA$Marital[data_SNA$marital_Single == 1]   <- "Single"
+data_SNA$Marital[data_SNA$marital_Together == 1] <- "Together"
+data_SNA$Marital[data_SNA$marital_Widow == 1]    <- "Widow"
+
+
+# Crear variable de aceptación (0 = No aceptó, 1 = Sí aceptó al menos 1 campaña)
+data_SNA <- data_SNA %>%
+  mutate(AceptoCamp = ifelse(AcceptedCmpOverall > 0, "Sí aceptó", "No aceptó"))
+
+ggplot(data_SNA, aes(x = Marital, fill = AceptoCamp)) +
+  geom_bar(position = "fill") +
+  geom_text(aes(
+      label = scales::percent(after_stat(count) / 
+                              tapply(after_stat(count), after_stat(x), sum)[after_stat(x)], 
+                              accuracy = 1)
+    ),
+    stat = "count",
+    position = position_fill(vjust = 0.5),
+    size = 3,
+    color = "white"
+  ) +
+  labs(title = "Estado civil vs Aceptación de campañas",
+       x = "Estado civil",
+       y = "Proporción de clientes",
+       fill = "Aceptación") +
+  scale_fill_manual(values = c("No aceptó" = "pink", "Sí aceptó" = "skyblue")) +
+  theme_minimal()
+```
+
+### Educacion vs Aceptación de campaña
+
+En el análisis de la aceptación de campañas según el nivel educativo, se encontró un patrón similar al del estado civil: en todos los niveles predomina la no aceptación (alrededor de 75%–85%), mientras que la proporción de clientes que aceptaron al menos una campaña se mantiene estable entre los distintos grupos (Basic, Secondary, Graduation, Master y PhD). Estos resultados indican que el nivel educativo no parece ser un factor relevante que influya en la respuesta de los clientes frente a las campañas.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Crear variable categórica de educación
+data_SNA <- data_SNA %>%
+  mutate(Education = case_when(
+    `education_2n Cycle` == 1 ~ "Secondary",
+    education_Basic == 1      ~ "Basic",
+    education_Graduation == 1 ~ "Graduation",
+    education_Master == 1     ~ "Master",
+    education_PhD == 1        ~ "PhD",
+    TRUE ~ "Desconocido"
+  ))
+
+# Crear variable de aceptación (0 = No aceptó, 1 = Sí aceptó al menos 1 campaña)
+data_SNA <- data_SNA %>%
+  mutate(AceptoCamp = ifelse(AcceptedCmpOverall > 0, "Sí aceptó", "No aceptó"))
+
+# Gráfico de barras con porcentajes corregido
+ggplot(data_SNA, aes(x = Education, fill = AceptoCamp)) +
+  geom_bar(position = "fill") +
+  geom_text(aes(
+      label = scales::percent(after_stat(count) / 
+                              tapply(after_stat(count), after_stat(x), sum)[after_stat(x)], 
+                              accuracy = 1)
+    ),
+    stat = "count",
+    position = position_fill(vjust = 0.5),
+    size = 3,
+    color = "white"
+  ) +
+  labs(title = "Nivel educativo vs Aceptación de campañas",
+       x = "Nivel educativo",
+       y = "Proporción de clientes",
+       fill = "Aceptación") +
+  scale_fill_manual(values = c("No aceptó" = "pink", "Sí aceptó" = "skyblue")) +
+  theme_minimal()
+
+```
+
+### Edad vs Aceptación de campaña
+
+Al analizar la aceptación de campañas por grupos de edad, se observa que en todos los rangos predomina la no aceptación, aunque se identifica una tendencia interesante: los clientes más jóvenes (≤30 y 31–40 años) presentan una proporción ligeramente mayor de aceptación en comparación con los grupos de mayor edad. Aun así, la diferencia no es lo suficientemente marcada como para concluir una relación fuerte, por lo que la edad puede considerarse un factor con cierta influencia, pero no determinante, en la respuesta a las campañas.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+data_SNA <- data_SNA %>%
+  mutate(AceptoCamp = ifelse(AcceptedCmpOverall > 0, "Sí aceptó", "No aceptó"))
+
+# 2) Agrupar edad en rangos
+data_SNA <- data_SNA %>%
+  mutate(AgeGroup = cut(Age,
+                        breaks = c(-Inf, 30, 40, 50, 60, Inf),
+                        labels = c("≤30", "31–40", "41–50", "51–60", "≥61"),
+                        right = TRUE))
+
+# 3) Calcular proporciones por grupo de edad
+df_age <- data_SNA %>%
+  count(AgeGroup, AceptoCamp) %>%
+  group_by(AgeGroup) %>%
+  mutate(Prop = n / sum(n)) %>%
+  ungroup()
+
+ggplot(df_age, aes(x = AgeGroup, y = Prop, fill = AceptoCamp)) +
+  geom_col() +
+  geom_text(aes(label = scales::percent(Prop, accuracy = 1)),
+            position = position_stack(vjust = 0.5),
+            color = "white", size = 3) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("No aceptó" = "pink", "Sí aceptó" = "skyblue")) +
+  labs(title = "Edad vs Aceptación de campañas",
+       x = "Grupo de edad",
+       y = "Proporción de clientes",
+       fill = "Aceptación") +
+  theme_minimal()
+
+
+```
+
+### Income vs Aceptación de campaña
+
+Se analizó la relación entre Income y AcceptedCmpOverall mediante gráficos de barras apiladas por rangos de ingreso y porcentajes de aceptación, complementados con una prueba ANOVA. Los resultados muestran un patrón evidente: los clientes con mayores ingresos presentan una mayor proporción de aceptación de campañas, mientras que en los grupos de ingresos bajos predomina la no aceptación. La prueba ANOVA confirmó estas diferencias al arrojar un valor F = 86.52 con un p < 0.001, lo que indica que las variaciones en el ingreso promedio entre los grupos son altamente significativas. En consecuencia, el ingreso se perfila como un factor determinante en la respuesta a las campañas, siendo los clientes de mayor poder adquisitivo los más propensos a participar.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# 1) Variable de aceptación (0 = no aceptó, 1+ = sí aceptó)
+data_SNA <- data_SNA %>%
+  mutate(AceptoCamp = ifelse(AcceptedCmpOverall > 0, "Sí aceptó", "No aceptó"))
+
+# 2) Agrupar Income en rangos (en miles, ajusta cortes según tu base)
+data_SNA <- data_SNA %>%
+  mutate(IncomeGroup = cut(Income,
+                           breaks = c(-Inf, 20000, 40000, 60000, 80000, Inf),
+                           labels = c("≤20k", "20–40k", "40–60k", "60–80k", "≥80k"),
+                           right = TRUE))
+
+# 3) Calcular proporciones por grupo de Income
+df_income <- data_SNA %>%
+  count(IncomeGroup, AceptoCamp) %>%
+  group_by(IncomeGroup) %>%
+  mutate(Prop = n / sum(n)) %>%
+  ungroup()
+
+ggplot(df_income, aes(x = IncomeGroup, y = Prop, fill = AceptoCamp)) +
+  geom_col() +
+  geom_text(aes(label = scales::percent(Prop, accuracy = 1)),
+            position = position_stack(vjust = 0.5),
+            color = "white", size = 3) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("No aceptó" = "pink", "Sí aceptó" = "skyblue")) +
+  labs(title = "Income vs Aceptación de campañas",
+       x = "Grupo de Ingreso",
+       y = "Proporción de clientes",
+       fill = "Aceptación") +
+  theme_minimal()
+
+
+# 3. ANOVA
+anova_income <- aov(Income ~ as.factor(AcceptedCmpOverall), data = data_SNA)
+summary(anova_income)
+
+```
+
+### Gasto por producto vs Aceptación de campaña
+
+Los resultados muestran que los clientes que aceptaron al menos una campaña presentan un gasto promedio superior en todos los productos comparados con quienes no aceptaron ninguna. En algunos casos, como vinos o productos premium, la diferencia supera el 100%, lo que significa que los clientes receptivos a las campañas llegan a gastar más del doble en estos artículos frente al resto de los clientes. Esto evidencia que la aceptación de campañas está estrechamente vinculada con un perfil de cliente de mayor valor, con mayor capacidad de gasto y mayor afinidad hacia productos de alto ticket.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+gasto_vars <- c("MntTotal","MntFishProducts","MntMeatProducts",
+                "MntFruits","MntSweetProducts","MntWines",
+                "MntGoldProds","MntRegularProds")
+
+# 1) Promedio por grupo (No aceptó / Sí aceptó)
+df_gasto <- data_SNA %>%
+  mutate(AceptoCamp = ifelse(AcceptedCmpOverall > 0, "Sí aceptó", "No aceptó")) %>%
+  group_by(AceptoCamp) %>%
+  summarise(across(all_of(gasto_vars), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
+  pivot_longer(all_of(gasto_vars), names_to = "Producto", values_to = "GastoProm")
+
+# 2) % de diferencia para cada producto (para etiqueta opcional)
+df_diff <- df_gasto %>%
+  pivot_wider(names_from = AceptoCamp, values_from = GastoProm) %>%
+  mutate(DifPorc = (`Sí aceptó` - `No aceptó`) / `No aceptó` * 100)
+
+ggplot(df_gasto, aes(x = Producto, y = GastoProm, fill = AceptoCamp)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(
+    data = df_diff,
+    aes(x = Producto, y = `Sí aceptó`, label = paste0(round(DifPorc, 1), "%")),
+    inherit.aes = FALSE,           # <-- clave: no hereda 'fill = AceptoCamp'
+    vjust = -0.5, size = 3.5
+  ) +
+  scale_fill_manual(values = c("No aceptó" = "pink", "Sí aceptó" = "skyblue")) +
+  labs(title = "Gasto promedio por producto según aceptación de campañas",
+       x = "Producto", y = "Gasto promedio", fill = "Aceptación") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+### Distribución de Compras/Visitas vs Aceptación de campaña
+
+Al comparar la distribución de compras y visitas entre los clientes que aceptaron y los que no aceptaron campañas, se observa un patrón diferenciado. Los clientes que aceptaron campañas muestran una mayor proporción de compras por catálogo (18.9% vs. 11.2%) y de compras web (22.4% vs. 19.7%), lo que sugiere un perfil más orientado hacia canales no presenciales. En contraste, quienes no aceptaron campañas presentan un mayor peso relativo en las compras en tienda física (28.3% vs. 29.9%) y en las visitas al sitio web sin compra (28.4% vs. 20.2%). Estos resultados indican que la receptividad a las campañas se asocia a clientes más activos en los canales digitales y con mayor disposición a realizar compras directas, mientras que los no receptivos se concentran más en la interacción presencial o visitas sin conversión.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Variables de compras/visitas
+compra_vars <- c("NumDealsPurchases","NumCatalogPurchases",
+                 "NumStorePurchases","NumWebPurchases","NumWebVisitsMonth")
+
+# 1) Agrupar clientes según aceptación
+df_compra <- data_SNA %>%
+  mutate(AceptoCamp = ifelse(AcceptedCmpOverall > 0, "Sí aceptó", "No aceptó")) %>%
+  group_by(AceptoCamp) %>%
+  summarise(across(all_of(compra_vars), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+
+# 2) Convertir a formato largo
+df_long <- df_compra %>%
+  pivot_longer(cols = all_of(compra_vars), names_to = "Actividad", values_to = "Promedio")
+
+# 3) Calcular % relativo al total de cada grupo
+df_long <- df_long %>%
+  group_by(AceptoCamp) %>%
+  mutate(Porcentaje = Promedio / sum(Promedio) * 100)
+
+# 4) Gráfico de barras comparativas (con % dentro)
+ggplot(df_long, aes(x = Actividad, y = Porcentaje, fill = AceptoCamp)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = paste0(round(Porcentaje,1), "%")),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("No aceptó" = "pink", "Sí aceptó" = "skyblue")) +
+  labs(title = "Distribución de compras y visitas según aceptación de campañas",
+       x = "Tipo de actividad",
+       y = "Proporción dentro del grupo (%)",
+       fill = "Aceptación") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+```
+
+# Conclusiones
+
+La depuración de la base permitió obtener 2.041 clientes únicos tras eliminar duplicados y corregir inconsistencias evidentes en Age y marital_Divorced. Los datos faltantes en Income y MntWines (<5%) se imputaron con la mediana tras confirmar un patrón MCAR, y los valores atípicos en ingresos, compras y gasto, aunque elevados, se consideraron plausibles y se mantuvieron para preservar la representatividad de clientes de alto valor.
+
+En cuanto a la efectividad de las campañas, las variables sociodemográficas (estado civil, educación y edad) no mostraron un peso significativo en la aceptación. En contraste, el ingreso resultó ser un factor determinante: la ANOVA mostró diferencias altamente significativas (F = 86.52, p < 0.001), evidenciando que los clientes que aceptaron campañas tienen mayores ingresos.
+
+Asimismo, estos clientes presentaron un gasto superior en todas las categorías de productos, con especial énfasis en vinos (+160%) y en artículos premium como carnes, oro y productos regulares, donde el gasto fue más del doble respecto a quienes no aceptaron. También se observó un perfil de consumo más orientado a canales digitales, con mayor proporción de compras por catálogo y web, frente a los no receptivos que se concentran en tiendas físicas y visitas sin compra.
+
+En síntesis, la aceptación de campañas está estrechamente vinculada con un perfil de cliente de mayor poder adquisitivo, con historial de gasto elevado y afinidad hacia canales digitales. Estos hallazgos sugieren que futuras estrategias de marketing deberían enfocar la segmentación en este tipo de clientes para maximizar la efectividad y rentabilidad de las campañas.
+
+
+# Referencias
+
+Gobierno de España. (2021). Análisis exploratorio de datos (EDA). Portal de Datos Abiertos del Gobierno de España. https://datos.gob.es/sites/default/files/doc/file/analisis_exploratorio_de_datos_2021.pdf
+
+U.S. Environmental Protection Agency. (n.d.). Exploratory data analysis. EPA. Retrieved October 30, 2024, from https://www.epa.gov/caddis/exploratory-data-analysis 
+
+Aggarwal, C. C. (2015). Data mining: The textbook. Springer. https://auladigital.javerianacali.edu.co/content/enforced/254856-ZOJV20241125001/DataMining_Aggarwal_2015.pdf?ou=303239
+
+Centro Magis (2025). Material del curso Métodos y Simulación, versión 02-2025. Maestría en Ciencia de Datos, Pontificia Universidad Javeriana Cali, Facultad de Ingeniería.
+
+# Anexos
+
+**Tabla 5. Tabla descriptiva de variables**
+
+```{r tabla_variables, echo=FALSE, message=FALSE, warning=FALSE}
+
+tabla_variables <- data.frame(
+  Variable = c(
+    "AcceptedCmp1","AcceptedCmp2","AcceptedCmp3","AcceptedCmp4","AcceptedCmp5",
+    "AcceptedCmpOverall","Response","Complain","DtCustomer","Customer_Days",
+    "Education","education_2n Cycle","education_Basic","education_Graduation",
+    "education_Master","education_PhD","Marital","marital_Divorced","marital_Married",
+    "marital_Single","marital_Together","marital_Widow","Kidhome","Teenhome","Income",
+    "MntFishProducts","MntMeatProducts","MntFruits","MntSweetProducts","MntWines",
+    "MntGoldProds","NumDealsPurchases","NumCatalogPurchases","NumStorePurchases",
+    "NumWebPurchases","NumWebVisitsMonth","Recency","Age","MntTotal","MntRegularProds"
+  ),
+  Descripcion = c(
+    "1 if customer accepted the offer in the 1st campaign, 0 otherwise",
+    "1 if customer accepted the offer in the 2nd campaign, 0 otherwise",
+    "1 if customer accepted the offer in the 3rd campaign, 0 otherwise",
+    "1 if customer accepted the offer in the 4th campaign, 0 otherwise",
+    "1 if customer accepted the offer in the 5th campaign, 0 otherwise",
+    "Overall number of accepted campaigns",
+    "1 if customer accepted the offer in the last campaign, 0 otherwise",
+    "1 if customer complained in the last 2 years",
+    "Date of customer’s enrolment with the company",
+    "Number of days since registration as a customer",
+    "Customer’s level of education",
+    "Customer has secondary education",
+    "Customer has basic education",
+    "Customer has a bachelor degree",
+    "Customer has a masters degree",
+    "Customer has a PhD",
+    "Customer’s marital status",
+    "1 if customer is divorced, 0 otherwise",
+    "1 if customer is married, 0 otherwise",
+    "1 if customer is single, 0 otherwise",
+    "1 if customer is in relationship, 0 otherwise",
+    "1 if customer is a widow/widower, 0 otherwise",
+    "Number of small children in customer’s household",
+    "Number of teenagers in customer’s household",
+    "Customer’s yearly household income",
+    "Amount spent on fish products in the last 2 years",
+    "Amount spent on meat products in the last 2 years",
+    "Amount spent on fruit products in the last 2 years",
+    "Amount spent on sweet products in the last 2 years",
+    "Amount spent on wine products in the last 2 years",
+    "Amount spent on gold products in the last 2 years",
+    "Number of purchases made with discount",
+    "Number of purchases made using catalogue",
+    "Number of purchases made directly in stores",
+    "Number of purchases made through company’s website",
+    "Number of visits to company’s website in the last month",
+    "Number of days since the last purchase",
+    "Age of customer",
+    "Total amount spent on all the products",
+    "Total amount spent on regular products"
+  ),
+  Clasificacion = c(
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Fecha",
+    "Cuantitativa discreta",
+    "Cualitativa ordinal",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cualitativa nominal",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta (binaria)",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta",
+    "Cuantitativa continua",
+    "Cuantitativa continua",
+    "Cuantitativa continua",
+    "Cuantitativa continua",
+    "Cuantitativa continua",
+    "Cuantitativa continua",
+    "Cuantitativa continua",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta",
+    "Cuantitativa discreta",
+    "Cuantitativa continua",
+    "Cuantitativa continua"
+  )
+)
+
+kable(tabla_variables)
+```
+
+**Tabla 6. Chequeo variables binarias**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+print(resumen_binarias)
+print (detalle_binarias)
+
+```
+
+**Tabla 7. Chequeo variables categoricas**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+print(resumen_cat)
+
+```
+
+**Tabla 8. Chequeo variables cuantitativas**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+print(resumen_cuant)
+print (detalle_cuant)
+
+```
+
+**Tabla 9. Indicadores descriptivos variables cuantitativas (con inconsistencias)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  
+print(descr(df_num))
+#print(summary(data))
+
+```
+
+**Grafico 6. Boxplot de variables cuantitativas (con inconsistencias)** 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#  Boxplots de variables cuantitativas con inconsistencias
+par(mfrow = c(3,3))
+for (v in vars_cuant) {
+  boxplot(data_dep[[v]], main = paste("Boxplot -", v), horizontal = TRUE)
+}
+par(mfrow = c(1,1))
+```
+
+**Grafico 7. Porcentaje Datos Faltantes iniciales**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+plot3 <- aggr(data_SAT)
+```
+
+**Grafico 8. Mapa de calor simple de faltantes**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+naniar::vis_miss(data_SAT[, c("Income","MntWines","Age","Kidhome","Teenhome","NumWebPurchases","NumWebVisitsMonth")])
+
+```
+
+**Grafico 9. Porcentaje Datos faltantes Ajustados**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+plot4 <- aggr(data_SNA)
+
+```
+
+## Analisis descriptivo post-procesamiento
+
+**Grafico 10. Estado Civil de los clientes**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#Grafico Marital
+
+vars_marital <- c("marital_Divorced","marital_Married","marital_Single",
+                  "marital_Together","marital_Widow")
+
+# Calcular la suma de los 1's en cada variable (número de clientes en cada categoría)
+suma_marital <- colSums(data_SNA[ , vars_marital] == 1, na.rm = TRUE)
+
+etiquetas <- c("Divorced","Married","Single","Together","Widow")
+
+total_clientes <- nrow(data_SNA)
+
+# Gráfico de barras con frecuencias
+bp <- barplot(suma_marital,
+        main = "Estado civil de los clientes",
+        xlab = "Estado civil",
+        ylab = "Numero de clientes",
+        col = "skyblue",
+        names.arg = etiquetas,
+        ylim = c(0, max(suma_marital) + 100))
+
+# Añadir etiquetas con porcentaje arriba de cada barra
+text(x = bp,  
+     y = suma_marital,
+     labels = paste0(round((suma_marital / total_clientes) * 100, 1), "%"),
+     pos = 3)  
+```
+
+**Grafico 11. Nivel educativo de los clientes**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+vars_edu <- c("education_2n Cycle","education_Basic","education_Graduation",
+              "education_Master","education_PhD")
+
+suma_edu <- colSums(data_dep[ , vars_edu] == 1, na.rm = TRUE)
+
+etiquetas <- c("Secondary","Basic","Graduation","Master","PhD")
+
+bp <- barplot(suma_edu,
+        main = "Nivel educativo de los clientes",
+        xlab = "Nivel educativo",
+        ylab = "Número de clientes",
+        col = "pink",
+        names.arg = etiquetas,
+        ylim = c(0, max(suma_edu) + 100))
+
+text(x = bp,
+     y = suma_edu,
+     labels = paste0(round((suma_edu / total_clientes) * 100, 1), "%"),
+     pos = 3)
+```
+
+**Grafico 12. Distribución de gastos**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Variables continuas a graficar
+vars_cont <- c("MntFishProducts","MntMeatProducts","MntFruits",
+               "MntSweetProducts","MntWines","MntGoldProds")
+
+# Boxplot
+boxplot(data_dep[ , vars_cont],
+        main = "Distribucion de gastos",
+        col = "lightblue",
+        names = c("Fish","Meat","Fruits","Sweets","Wines","Gold"),
+        ylab = "Valor en dinero")
+
+
+```
+
+**Grafico 13. Distribución de compras y visitas**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+vars_purchases <- c("NumDealsPurchases","NumCatalogPurchases","NumStorePurchases",
+                    "NumWebPurchases","NumWebVisitsMonth")
+
+# Boxplot conjunto
+boxplot(data_dep[ , vars_purchases],
+        main = "Distribucion de compras y visitas",
+        col = "pink",
+        names = c("Deals","Catalog","Store","Web","Visits Web"),
+        ylab = "Numero de compras / visitas")
+```
+
+**Grafico 14. Aceptación de campañas**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+vars <- c("AcceptedCmp1","AcceptedCmp2","AcceptedCmp3","AcceptedCmp4","AcceptedCmp5")
+
+suma_aceptados <- colSums(data_dep[ , vars] == 1, na.rm = TRUE)
+
+etiquetas <- c("Camp 1","Camp 2","Camp 3","Camp 4","Camp 5")
+
+total_clientes <- nrow(data_dep)
+
+# Gráfico de barras
+bp <- barplot(suma_aceptados,
+        main = "Aceptación de campañas",
+        xlab = "Campaña",
+        ylab = "Número de aceptados",
+        col = "skyblue",
+        names.arg = etiquetas,
+        ylim = c(0, max(suma_aceptados) + 20))
+
+text(x = bp,
+     y = suma_aceptados,
+     labels = paste0(round((suma_aceptados / total_clientes) * 100, 1), "%"),
+     pos = 3)
+
+```
+
